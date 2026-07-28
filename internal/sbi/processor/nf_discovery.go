@@ -52,6 +52,7 @@ func validateQueryParameters(queryParameters url.Values) bool {
 		"BSF":    true,
 		"CHF":    true,
 		"NWDAF":  true,
+		"ADRF":   true,
 	}
 	var tgt, req string
 	if queryParameters["target-nf-type"] != nil {
@@ -97,6 +98,16 @@ func (p *Processor) NFDiscoveryProcedure(c *gin.Context, queryParameters url.Val
 			Cause:  "Loss mandatory parameter",
 		}
 		util.GinProblemJson(c, problemDetails)
+		return
+	}
+	extendedCriteria, err := parseExtendedDiscoveryCriteria(queryParameters)
+	if err != nil {
+		util.GinProblemJson(c, &models.ProblemDetails{
+			Title:  "Invalid Parameter",
+			Status: http.StatusBadRequest,
+			Cause:  "INVALID_QUERY_PARAM",
+			Detail: err.Error(),
+		})
 		return
 	}
 
@@ -149,6 +160,29 @@ func (p *Processor) NFDiscoveryProcedure(c *gin.Context, queryParameters url.Val
 			Cause:  "SYSTEM_FAILURE",
 		}
 		util.GinProblemJson(c, problemDetails)
+		return
+	}
+	targetNFType := queryParameters["target-nf-type"][0]
+	if requiresCompatibilityDiscovery(targetNFType, extendedCriteria) {
+		matchedProfiles, matchErr := filterCompatibilityProfiles(
+			nfProfilesRaw,
+			extendedCriteria,
+		)
+		if matchErr != nil {
+			logger.DiscLog.Errorf("NF Profile compatibility decode error: %+v", matchErr)
+			util.GinProblemJson(c, &models.ProblemDetails{
+				Title:  "System failure",
+				Status: http.StatusInternalServerError,
+				Detail: matchErr.Error(),
+				Cause:  "SYSTEM_FAILURE",
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"validityPeriod":       100,
+			"nfInstances":          matchedProfiles,
+			"nrfSupportedFeatures": nrfR18SupportedFeatures,
+		})
 		return
 	}
 

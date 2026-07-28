@@ -2,6 +2,7 @@ package processor
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/free5gc/openapi/models"
@@ -27,6 +28,83 @@ func validTestNfProfile() models.NrfNfManagementNfProfile {
 				},
 			},
 		},
+	}
+}
+
+func TestValidateNfProfileAcceptsRelease18NWDAFCapability(t *testing.T) {
+	raw := []byte(`{
+		"nfInstanceId":"11111111-1111-4111-8111-111111111111",
+		"nfType":"NWDAF",
+		"nfStatus":"REGISTERED",
+		"nwdafInfo":{
+			"nwdafEvents":["UE_COMMUNICATION"],
+			"mlAnalyticsList":[{
+				"mlAnalyticsIds":["UE_COMMUNICATION"],
+				"trackingAreaList":[{
+					"plmnId":{"mcc":"466","mnc":"92"},
+					"tac":"000001"
+				}],
+				"mlModelInterInfo":{"vendorList":["001122"]},
+				"flCapabilityType":"FL_CLIENT",
+				"nfTypeList":["UPF"]
+			}]
+		}
+	}`)
+	var profile models.NrfNfManagementNfProfile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNfProfileJSON(raw, &profile); err != nil {
+		t.Fatalf("validateNfProfileJSON() error = %v", err)
+	}
+}
+
+func TestValidateNfProfileRejectsInvalidRelease18Capability(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		value   string
+		wantErr string
+	}{
+		{name: "empty analytics list", field: "mlAnalyticsList", value: `[]`, wantErr: "at least one"},
+		{
+			name:    "invalid vendor",
+			field:   "mlAnalyticsList",
+			value:   `[{"mlAnalyticsIds":["UE_COMMUNICATION"],"mlModelInterInfo":{"vendorList":["vendor"]}}]`,
+			wantErr: "Vendor ID",
+		},
+		{
+			name:    "invalid capability",
+			field:   "mlAnalyticsList",
+			value:   `[{"mlAnalyticsIds":["UE_COMMUNICATION"],"flCapabilityType":"NOT_A_ROLE"}]`,
+			wantErr: "flCapabilityType",
+		},
+		{
+			name:  "invalid tai",
+			field: "mlAnalyticsList",
+			value: `[{"mlAnalyticsIds":["UE_COMMUNICATION"],"trackingAreaList":[` +
+				`{"plmnId":{"mcc":"46","mnc":"92"},"tac":"1"}]}]`,
+			wantErr: "trackingAreaList",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			raw := []byte(`{
+				"nfInstanceId":"11111111-1111-4111-8111-111111111111",
+				"nfType":"NWDAF",
+				"nfStatus":"REGISTERED",
+				"nwdafInfo":{"` + test.field + `":` + test.value + `}
+			}`)
+			var profile models.NrfNfManagementNfProfile
+			if err := json.Unmarshal(raw, &profile); err != nil {
+				t.Fatal(err)
+			}
+			err := validateNfProfileJSON(raw, &profile)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("validateNfProfileJSON() error = %v, want %q", err, test.wantErr)
+			}
+		})
 	}
 }
 

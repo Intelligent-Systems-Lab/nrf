@@ -22,7 +22,7 @@ func NewConsumer(nrf ConsumerNrf) (*Consumer, error) {
 
 	c.nnrfService = &nnrfService{
 		consumer:        c,
-		nfMngmntClients: make(map[string]*NFManagement.APIClient),
+		nfMngmntConfigs: make(map[string]*NFManagement.Configuration),
 	}
 	return c, nil
 }

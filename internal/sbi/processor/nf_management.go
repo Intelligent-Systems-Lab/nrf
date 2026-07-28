@@ -14,6 +14,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"go.mongodb.org/mongo-driver/bson"
 
+	compatnrf "github.com/free5gc/nrf/internal/compat/nrf"
 	nrf_context "github.com/free5gc/nrf/internal/context"
 	"github.com/free5gc/nrf/internal/logger"
 	"github.com/free5gc/nrf/internal/util"
@@ -306,7 +307,6 @@ func (p *Processor) NFDeregisterProcedure(nfInstanceID string) *models.ProblemDe
 		}
 		return problemDetails
 	}
-
 	if len(nfProfiles) == 0 {
 		logger.NfmLog.Warnf("NFProfile[%s] not found", nfInstanceID)
 		problemDetails := &models.ProblemDetails{
@@ -484,6 +484,24 @@ func (p *Processor) UpdateNFInstanceProcedure(
 			Detail: fmt.Sprintf("NFProfile[%s] not found", nfInstanceID),
 		}
 	}
+	encodedProfile, err := json.Marshal(nf)
+	if err != nil {
+		return nil, &models.ProblemDetails{
+			Title:  "System failure",
+			Status: http.StatusInternalServerError,
+			Detail: err.Error(),
+			Cause:  "SYSTEM_FAILURE",
+		}
+	}
+	var notificationProfile compatnrf.NFProfile
+	if err = json.Unmarshal(encodedProfile, &notificationProfile); err != nil {
+		return nil, &models.ProblemDetails{
+			Title:  "System failure",
+			Status: http.StatusInternalServerError,
+			Detail: err.Error(),
+			Cause:  "SYSTEM_FAILURE",
+		}
+	}
 
 	uriList := nrf_context.GetNofificationUri(&nfProfiles[0])
 
@@ -497,7 +515,13 @@ func (p *Processor) UpdateNFInstanceProcedure(
 			logger.NfmLog.Errorf("UpdateNFInstanceProcedure SendNotification Error: %+v", pd)
 			continue
 		}
-		p.Consumer().SendNFStatusNotify(notifCtx, Notification_event, nfInstanceUri, target.Uri, &nfProfiles[0])
+		p.Consumer().SendNFStatusNotify(
+			notifCtx,
+			Notification_event,
+			nfInstanceUri,
+			target.Uri,
+			&notificationProfile,
+		)
 	}
 	return nf, nil
 }
@@ -606,8 +630,20 @@ func (p *Processor) NFRegisterProcedure(
 
 	// make location header
 	locationHeaderValue := nrf_context.SetLocationHeader(nfProfile)
-	// Marshal nf to bson
-	tmp, err := json.Marshal(nf)
+	var storedProfile compatnrf.NFProfile
+	if err = json.Unmarshal(rawProfile, &storedProfile); err != nil {
+		util.GinProblemJson(c, &models.ProblemDetails{
+			Title:  "Malformed request syntax",
+			Status: http.StatusBadRequest,
+			Detail: err.Error(),
+		})
+		return
+	}
+	storedProfile.NrfNfManagementNfProfile = nf
+
+	// Marshal the normalized base profile together with the validated Release
+	// 18 extensions. This keeps standard JSON property names in MongoDB.
+	tmp, err := json.Marshal(storedProfile)
 	if err != nil {
 		logger.NfmLog.Errorln("Marshal error in NFRegisterProcedure: ", err)
 		problemDetails := &models.ProblemDetails{
@@ -666,8 +702,13 @@ func (p *Processor) NFRegisterProcedure(
 				util.GinProblemJson(c, pd)
 				return
 			}
-			problemDetails := p.Consumer().SendNFStatusNotify(notifCtxUpdate,
-				Notification_event, nfInstanceUri, target.Uri, nfProfile)
+			problemDetails := p.Consumer().SendNFStatusNotify(
+				notifCtxUpdate,
+				Notification_event,
+				nfInstanceUri,
+				target.Uri,
+				&storedProfile,
+			)
 			if problemDetails != nil {
 				util.GinProblemJson(c, problemDetails)
 				return
@@ -693,8 +734,13 @@ func (p *Processor) NFRegisterProcedure(
 				util.GinProblemJson(c, pd)
 				return
 			}
-			problemDetails := p.Consumer().SendNFStatusNotify(notifCtxCreate,
-				Notification_event, nfInstanceUri, target.Uri, nfProfile)
+			problemDetails := p.Consumer().SendNFStatusNotify(
+				notifCtxCreate,
+				Notification_event,
+				nfInstanceUri,
+				target.Uri,
+				&storedProfile,
+			)
 			if problemDetails != nil {
 				util.GinProblemJson(c, problemDetails)
 				return

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	compatnrf "github.com/free5gc/nrf/internal/compat/nrf"
 	"github.com/free5gc/openapi/models"
 )
 
@@ -37,7 +38,121 @@ func validateNfProfileJSON(raw []byte, nfProfile *models.NrfNfManagementNfProfil
 		}
 	}
 
-	return validateNfProfile(nfProfile)
+	if err := validateNfProfile(nfProfile); err != nil {
+		return err
+	}
+	var profile compatnrf.NFProfile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return fmt.Errorf("invalid Release 18 NF profile fields: %w", err)
+	}
+	return validateRelease18Profile(fields, profile)
+}
+
+func validateRelease18Profile(
+	fields map[string]json.RawMessage,
+	profile compatnrf.NFProfile,
+) error {
+	if _, present := fields["nwdafInfo"]; present {
+		if profile.NwdafInfo == nil {
+			return fmt.Errorf("nwdafInfo must be an object")
+		}
+		if err := validateNwdafInfo(*profile.NwdafInfo); err != nil {
+			return fmt.Errorf("nwdafInfo: %w", err)
+		}
+	}
+	if _, present := fields["nwdafInfoList"]; present {
+		if len(profile.NwdafInfoList) == 0 {
+			return fmt.Errorf("nwdafInfoList must contain at least one entry")
+		}
+		for key, info := range profile.NwdafInfoList {
+			if err := validateNwdafInfo(info); err != nil {
+				return fmt.Errorf("nwdafInfoList[%q]: %w", key, err)
+			}
+		}
+	}
+	if _, present := fields["adrfInfoList"]; present && len(profile.AdrfInfoList) == 0 {
+		return fmt.Errorf("adrfInfoList must contain at least one entry")
+	}
+	return nil
+}
+
+func validateNwdafInfo(info compatnrf.NwdafInfo) error {
+	if info.NwdafEvents != nil && len(info.NwdafEvents) == 0 {
+		return fmt.Errorf("nwdafEvents must contain at least one entry when present")
+	}
+	if info.MLAnalyticsList != nil && len(info.MLAnalyticsList) == 0 {
+		return fmt.Errorf("mlAnalyticsList must contain at least one entry when present")
+	}
+	for index, entry := range info.MLAnalyticsList {
+		if err := compatnrf.ValidateMLAnalyticsInfo(entry); err != nil {
+			return fmt.Errorf("mlAnalyticsList[%d]: %w", index, err)
+		}
+		if entry.FLCapabilityType != "" && !compatnrf.IsKnownFLCapability(entry.FLCapabilityType) {
+			return fmt.Errorf(
+				"mlAnalyticsList[%d].flCapabilityType %q is invalid",
+				index,
+				entry.FLCapabilityType,
+			)
+		}
+		for taiIndex, tai := range entry.TrackingAreaList {
+			if tai.PlmnId == nil || !validMCC(tai.PlmnId.Mcc) ||
+				!validMNC(tai.PlmnId.Mnc) || !validTAC(tai.Tac) {
+				return fmt.Errorf(
+					"mlAnalyticsList[%d].trackingAreaList[%d] is invalid",
+					index,
+					taiIndex,
+				)
+			}
+		}
+		for snssaiIndex, snssai := range entry.SNSSAIList {
+			if snssai.Sst < 0 || snssai.Sst > 255 ||
+				snssai.Sd != "" && !validSD(snssai.Sd) {
+				return fmt.Errorf(
+					"mlAnalyticsList[%d].snssaiList[%d] is invalid",
+					index,
+					snssaiIndex,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func validMCC(value string) bool {
+	return len(value) == 3 && allDigits(value)
+}
+
+func validMNC(value string) bool {
+	return (len(value) == 2 || len(value) == 3) && allDigits(value)
+}
+
+func validTAC(value string) bool {
+	return (len(value) == 4 || len(value) == 6) && allHex(value)
+}
+
+func validSD(value string) bool {
+	return len(value) == 6 && allHex(value)
+}
+
+func allDigits(value string) bool {
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func allHex(value string) bool {
+	for _, char := range value {
+		if char >= '0' && char <= '9' ||
+			char >= 'a' && char <= 'f' ||
+			char >= 'A' && char <= 'F' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // validateNfProfile validates semantic constraints on a decoded NF profile.
