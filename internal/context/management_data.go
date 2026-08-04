@@ -210,6 +210,10 @@ func nnrfNFManagementOption(nf *models.NrfNfManagementNfProfile, nfprofile *mode
 			udmInfo.RoutingIndicators = nfprofile.UdmInfo.RoutingIndicators
 		}
 
+		if nfprofile.UdmInfo.InternalGroupIdentifiersRanges != nil {
+			udmInfo.InternalGroupIdentifiersRanges = nfprofile.UdmInfo.InternalGroupIdentifiersRanges
+		}
+
 		nf.UdmInfo = &udmInfo
 	}
 	// ausfInfo
